@@ -1,52 +1,55 @@
 # coding=utf-8
-
-import click
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import click
 import shutil
 import sys
 import time
-
 import cv2
 import numpy as np
 import tensorflow as tf
 
 
-tf.app.flags.DEFINE_string('test_data_path', 'data/cmt/', '')
-tf.app.flags.DEFINE_string('output_path', 'data/res/', '')
+# tf.app.flags.DEFINE_string('test_data_path', 'data/demo/', '')
+tf.app.flags.DEFINE_string('output_path', '', '')
 tf.app.flags.DEFINE_string('gpu', '0', '')
 tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_mlt/', '')
 FLAGS = tf.app.flags.FLAGS
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
 def get_images():
     files = []
     exts = ['jpg', 'png', 'jpeg', 'JPG']
-    for parent, dirnames, filenames in os.walk(FLAGS.test_data_path):
-        for filename in filenames:
-            for ext in exts:
-                if filename.endswith(ext):
-                    files.append(os.path.join(parent, filename))
-                    break
+    if FLAGS.image:
+        files.append(FLAGS.image)
+    else:
+        for parent, dirnames, filenames in os.walk(FLAGS.test_data_path):
+            for filename in filenames:
+                for ext in exts:
+                    if filename.endswith(ext):
+                        files.append(os.path.join(parent, filename))
+                        break
     print('Find {} images'.format(len(files)))
     return files
 
 
-def resize_image(img):
-    img_size = img.shape
-    im_size_min = np.min(img_size[0:2])
-    im_size_max = np.max(img_size[0:2])
+def resize_image(img, max_size=500):
+    h, w, _ = img.shape
+    im_size_max = max(h, w)
 
-    im_scale = float(600) / float(im_size_min)
-    if np.round(im_scale * im_size_max) > 1200:
-        im_scale = float(1200) / float(im_size_max)
-    new_h = int(img_size[0] * im_scale)
-    new_w = int(img_size[1] * im_scale)
+    im_scale = float(max_size) / float(im_size_max)
 
-    new_h = new_h if new_h // 16 == 0 else (new_h // 16 + 1) * 16
-    new_w = new_w if new_w // 16 == 0 else (new_w // 16 + 1) * 16
+    # new_h = int(h * im_scale)
+    # new_w = int(w * im_scale)
 
-    re_im = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-    return re_im, (new_h / img_size[0], new_w / img_size[1])
+    # # round to 16
+    # new_h = new_h if new_h // 16 == 0 else (new_h // 16 + 1) * 16
+    # new_w = new_w if new_w // 16 == 0 else (new_w // 16 + 1) * 16
+
+    re_im = cv2.resize(img, None, fx=im_scale, fy=im_scale,
+                       interpolation=cv2.INTER_LINEAR)
+    return re_im, im_scale
 
 
 def main(argv=None):
@@ -59,9 +62,11 @@ def main(argv=None):
     from nets import model_train as model
     from utils.rpn_msr.proposal_layer import proposal_layer
 
-    if os.path.exists(FLAGS.output_path):
-        shutil.rmtree(FLAGS.output_path)
-    os.makedirs(FLAGS.output_path)
+    if FLAGS.output_path:
+        if os.path.exists(FLAGS.output_path):
+            shutil.rmtree(FLAGS.output_path)
+        os.makedirs(FLAGS.output_path)
+
     os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
 
     with tf.compat.v1.get_default_graph().as_default():
@@ -91,20 +96,27 @@ def main(argv=None):
             for im_fn in im_fn_list:
                 print('===============')
                 print(im_fn)
-                start = time.time()
+
                 try:
-                    im = cv2.imread(im_fn)[:, :, ::-1]
+                    im = cv2.imread(im_fn)  # [:, :, ::-1]
                 except:
                     print("Error reading image {}!".format(im_fn))
                     continue
 
-                img, (rh, rw) = resize_image(im)
+                img, im_scale = resize_image(im, int(FLAGS.image_size))
+                img = cv2.detailEnhance(img)
+
+                # process image
+                start = time.time()
                 h, w, c = img.shape
+                print(h, w, im_scale)
                 im_info = np.array([h, w, c]).reshape([1, 3])
+
                 bbox_pred_val, cls_prob_val = sess.run([bbox_pred, cls_prob],
                                                        feed_dict={input_image: [img],
                                                                   input_im_info: im_info})
 
+                thickness = int(h / 100)
                 textsegs, _ = proposal_layer(
                     cls_prob_val, bbox_pred_val, im_info)
                 scores = textsegs[:, 0]
@@ -113,31 +125,48 @@ def main(argv=None):
                 textdetector = TextDetector(DETECT_MODE=FLAGS.detect_mode)
                 boxes = textdetector.detect(
                     textsegs, scores[:, np.newaxis], img.shape[:2])
-                boxes = np.array(boxes, dtype=np.int)
+                boxes = np.array(boxes, dtype=np.float64)
 
                 cost_time = (time.time() - start)
                 print("cost time: {:.2f}s".format(cost_time))
 
+                # applied to result and fix scale
                 for i, box in enumerate(boxes):
-                    cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
-                                  thickness=2)
-                img = cv2.resize(img, None, None, fx=1.0 / rh,
-                                 fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
-                cv2.imwrite(os.path.join(FLAGS.output_path,
-                                         os.path.basename(im_fn)), img[:, :, ::-1])
+                    box[:8] /= im_scale
+                    points = [box[:8].astype(np.int32).reshape((-1, 1, 2))]
+                    cv2.polylines(im, points, True, color=(0, 255, 0),
+                                  thickness=thickness, lineType=cv2.LINE_AA)
 
-                with open(os.path.join(FLAGS.output_path, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
-                          "w") as f:
-                    for i, box in enumerate(boxes):
-                        line = ",".join(str(box[k]) for k in range(8))
-                        line += "," + str(scores[i]) + "\r\n"
-                        f.writelines(line)
+                basename = os.path.basename(im_fn)
+                if FLAGS.output_path:
+                    cv2.imwrite(os.path.join(FLAGS.output_path,
+                                             basename), im)
+
+                    with open(os.path.join(FLAGS.output_path, os.path.splitext(basename)[0]) + ".txt",
+                              "w") as f:
+                        for i, box in enumerate(boxes):
+                            line = ",".join(str(box[k]) for k in range(8))
+                            line += "," + str(scores[i]) + "\r\n"
+                            f.writelines(line)
+                else:
+                    # cv2.namedWindow(basename, cv2.WND_PROP_FULLSCREEN)
+                    # cv2.setWindowProperty(
+                    #     basename, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
+                    cv2.resizeWindow(basename, w, h)
+                    cv2.imshow(basename, im)
+                    cv2.waitKey(0)
 
 
 @click.command()
 @click.option('--mode', '-m', default='H')
-def run(mode):
+@click.option('--image', '-i', default='data/demo/cmt.jpg')
+@click.option('--size', '-s', default='600')
+def run(mode, image, size):
     tf.app.flags.DEFINE_string('detect_mode', mode, '')
+    tf.app.flags.DEFINE_string('image', image, '')
+    tf.app.flags.DEFINE_string('image_size', size, '')
+
     tf.compat.v1.app.run()
 
 
