@@ -1,27 +1,21 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from utils.dataset import data_provider as data_provider
 from nets import model_train as model
 from tensorflow.contrib import slim
 import datetime
-import os
 import sys
 import time
-
+import click
 import tensorflow as tf
 
 sys.path.append(os.getcwd())
 
 tf.app.flags.DEFINE_float('learning_rate', 1e-5, '')
-tf.app.flags.DEFINE_integer('max_steps', 50000, '')
 tf.app.flags.DEFINE_integer('decay_steps', 30000, '')
-tf.app.flags.DEFINE_integer('decay_rate', 0.1, '')
+tf.app.flags.DEFINE_float('decay_rate', 0.1, '')
 tf.app.flags.DEFINE_float('moving_average_decay', 0.997, '')
-tf.app.flags.DEFINE_integer('num_readers', 4, '')
-tf.app.flags.DEFINE_string('gpu', '0', '')
-tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_mlt/', '')
-tf.app.flags.DEFINE_string('logs_path', 'logs_mlt/', '')
 tf.app.flags.DEFINE_string('pretrained_model_path', 'data/vgg_16.ckpt', '')
-tf.app.flags.DEFINE_boolean('restore', True, '')
-tf.app.flags.DEFINE_integer('save_checkpoint_steps', 2000, '')
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -119,5 +113,29 @@ def main(argv=None):
                 print('Write model to: {:s}'.format(filename))
 
 
+@click.command()
+@click.option('--data', '-d', default='data/dataset/mlt_cmt')
+@click.option('--gpu', '-g', default='0')
+@click.option('--num_readers', '-n', default=4, type=int)
+@click.option('--checkpoint_path', '-cp', default='checkpoints_mlt_cmt/')
+@click.option('--logs_path', '-lp', default='logs_mlt_cmt/')
+@click.option('--restore', '-r', default=False, type=bool)
+@click.option('--max_steps', '-m', default=50000, type=int)
+@click.option('--save_checkpoint_steps', '-s', default=2000, type=int)
+def run(data, gpu, num_readers, checkpoint_path, logs_path, restore, max_steps, save_checkpoint_steps):
+    data_provider.DATA_FOLDER = data
+
+    # after update data_folder, running train
+    tf.app.flags.DEFINE_boolean('restore', restore, '')
+    tf.app.flags.DEFINE_integer('num_readers', num_readers, '')
+    tf.app.flags.DEFINE_string('gpu', gpu, '')
+    tf.app.flags.DEFINE_string('checkpoint_path', checkpoint_path, '')
+    tf.app.flags.DEFINE_string('logs_path', logs_path, '')
+    tf.app.flags.DEFINE_integer('max_steps', max_steps, '')
+    tf.app.flags.DEFINE_integer(
+        'save_checkpoint_steps', save_checkpoint_steps, '')
+    tf.compat.v1.app.run()
+
+
 if __name__ == '__main__':
-    tf.app.run()
+    run()

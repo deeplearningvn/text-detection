@@ -37,7 +37,7 @@ def process(input, output, size):
 
             img = cv2.imread(img_path)
             h, w, _ = img.shape
-            re_im, im_scale = resize_image(img, size)
+            re_im, _ = resize_image(img, size)
             re_size = re_im.shape
 
             polys = []

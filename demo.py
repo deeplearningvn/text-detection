@@ -13,8 +13,7 @@ from utils.image import resize_image
 
 # tf.app.flags.DEFINE_string('test_data_path', 'data/demo/', '')
 tf.app.flags.DEFINE_string('output_path', '', '')
-tf.app.flags.DEFINE_string('gpu', '0', '')
-tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_mlt/', '')
+tf.app.flags.DEFINE_float('moving_average_decay', 0.997, '')
 FLAGS = tf.app.flags.FLAGS
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
@@ -64,7 +63,7 @@ def main(argv=None):
         bbox_pred, cls_pred, cls_prob = model.model(input_image)
 
         variable_averages = tf.train.ExponentialMovingAverage(
-            0.997, global_step)
+            FLAGS.moving_average_decay, global_step)
         saver = tf.compat.v1.train.Saver(
             variable_averages.variables_to_restore())
 
@@ -86,20 +85,20 @@ def main(argv=None):
                     print("Error reading image {}!".format(im_fn))
                     continue
 
-                img, im_scale = resize_image(im, int(FLAGS.image_size))
-                img = cv2.detailEnhance(img)
+                img, (rh, rw) = resize_image(im, FLAGS.image_size)
+                # img = cv2.detailEnhance(img)
 
                 # process image
                 start = time.time()
                 h, w, c = img.shape
-                print(h, w, im_scale)
+                # print(h, w, rh, rw)
                 im_info = np.array([h, w, c]).reshape([1, 3])
 
                 bbox_pred_val, cls_prob_val = sess.run([bbox_pred, cls_prob],
                                                        feed_dict={input_image: [img],
                                                                   input_im_info: im_info})
 
-                thickness = int(h / 100)
+                thickness = max(1, int(im.shape[0] / 400))
                 textsegs, _ = proposal_layer(
                     cls_prob_val, bbox_pred_val, im_info)
                 scores = textsegs[:, 0]
@@ -115,7 +114,8 @@ def main(argv=None):
 
                 # applied to result and fix scale
                 for i, box in enumerate(boxes):
-                    box[:8] /= im_scale
+                    box[:8][::2] /= rh
+                    box[1:8][::2] /= rh
                     points = [box[:8].astype(np.int32).reshape((-1, 1, 2))]
                     cv2.polylines(im, points, True, color=(0, 255, 0),
                                   thickness=thickness, lineType=cv2.LINE_AA)
@@ -144,11 +144,15 @@ def main(argv=None):
 @click.command()
 @click.option('--mode', '-m', default='H')
 @click.option('--image', '-i', default='data/demo/cmt.jpg')
-@click.option('--size', '-s', default='600')
-def run(mode, image, size):
+@click.option('--size', '-s', default=600, type=int)
+@click.option('--gpu', '-g', default='0')
+@click.option('--checkpoint_path', '-cp', default='checkpoints_mlt/')
+def run(mode, image, size, gpu, checkpoint_path):
     tf.app.flags.DEFINE_string('detect_mode', mode, '')
     tf.app.flags.DEFINE_string('image', image, '')
-    tf.app.flags.DEFINE_string('image_size', size, '')
+    tf.app.flags.DEFINE_integer('image_size', size, '')
+    tf.app.flags.DEFINE_string('gpu', gpu, '')
+    tf.app.flags.DEFINE_string('checkpoint_path', checkpoint_path, '')
 
     tf.compat.v1.app.run()
 
