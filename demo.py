@@ -142,7 +142,9 @@ def main(argv=None):
                     with open(gt_path, "w") as f:
                         for i, box in enumerate(boxes):
                             line = ",".join(str(int(box[k])) for k in range(8))
-                            line += "," + str(scores[i]) + "\r\n"
+                            # line += "," + str(scores[i]) + "\r\n"
+                            # store label as 0-9 for simple
+                            line += "," + str(i % 10) + "\r\n"
                             f.writelines(line)
                 else:
                     # cv2.namedWindow(basename, cv2.WND_PROP_FULLSCREEN)
