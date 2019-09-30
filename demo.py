@@ -10,21 +10,21 @@ import numpy as np
 import tensorflow as tf
 from utils.image import resize_image
 
-
-# tf.app.flags.DEFINE_string('test_data_path', 'data/demo/', '')
-tf.app.flags.DEFINE_string('output_path', '', '')
 tf.app.flags.DEFINE_float('moving_average_decay', 0.997, '')
 FLAGS = tf.app.flags.FLAGS
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
+exts = ['.jpg', '.png', '.jpeg', '.JPG']
+
+
 def get_images():
     files = []
-    exts = ['jpg', 'png', 'jpeg', 'JPG']
-    if FLAGS.image:
-        files.append(FLAGS.image)
+    _, ext = os.path.splitext(FLAGS.input)
+    if ext in exts:
+        files.append(FLAGS.input)
     else:
-        for parent, dirnames, filenames in os.walk(FLAGS.test_data_path):
+        for parent, dirnames, filenames in os.walk(FLAGS.input):
             for filename in filenames:
                 for ext in exts:
                     if filename.endswith(ext):
@@ -45,9 +45,18 @@ def main(argv=None):
     from utils.rpn_msr.proposal_layer import proposal_layer
 
     if FLAGS.output_path:
-        if os.path.exists(FLAGS.output_path):
-            shutil.rmtree(FLAGS.output_path)
-        os.makedirs(FLAGS.output_path)
+        # if need overide output? may be no need for testing
+        # shutil.rmtree(FLAGS.output_path)
+
+        if not os.path.exists(FLAGS.output_path):
+            os.makedirs(FLAGS.output_path)
+
+        image_path = os.path.join(FLAGS.output_path, "image")
+        label_path = os.path.join(FLAGS.output_path, "label")
+        if not os.path.exists(image_path):
+            os.makedirs(image_path)
+        if not os.path.exists(label_path):
+            os.makedirs(label_path)
 
     os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
 
@@ -75,6 +84,8 @@ def main(argv=None):
             saver.restore(sess, model_path)
 
             im_fn_list = get_images()
+            # print(im_fn_list)
+
             for im_fn in im_fn_list:
                 print('===============')
                 print(im_fn)
@@ -86,7 +97,7 @@ def main(argv=None):
                     continue
 
                 img, (rh, rw) = resize_image(im, FLAGS.image_size)
-                # img = cv2.detailEnhance(img)
+                img = cv2.detailEnhance(img)
 
                 # process image
                 start = time.time()
@@ -116,25 +127,33 @@ def main(argv=None):
                 for i, box in enumerate(boxes):
                     box[:8][::2] /= rh
                     box[1:8][::2] /= rh
-                    points = [box[:8].astype(np.int32).reshape((-1, 1, 2))]
-                    cv2.polylines(im, points, True, color=(0, 255, 0),
-                                  thickness=thickness, lineType=cv2.LINE_AA)
 
                 basename = os.path.basename(im_fn)
                 if FLAGS.output_path:
-                    cv2.imwrite(os.path.join(FLAGS.output_path,
-                                             basename), im)
 
-                    with open(os.path.join(FLAGS.output_path, os.path.splitext(basename)[0]) + ".txt",
-                              "w") as f:
+                    bfn, ext = os.path.splitext(basename)
+                    gt_path = os.path.join(
+                        FLAGS.output_path, "label", 'gt_' + bfn + '.txt')
+                    img_path = os.path.join(
+                        FLAGS.output_path, "image", basename)
+                    # save image and coordination, may be resize image
+                    # cv2.imwrite(img_path, im)
+                    shutil.copyfile(im_fn, img_path)
+                    with open(gt_path, "w") as f:
                         for i, box in enumerate(boxes):
-                            line = ",".join(str(box[k]) for k in range(8))
+                            line = ",".join(str(int(box[k])) for k in range(8))
                             line += "," + str(scores[i]) + "\r\n"
                             f.writelines(line)
                 else:
                     # cv2.namedWindow(basename, cv2.WND_PROP_FULLSCREEN)
                     # cv2.setWindowProperty(
                     #     basename, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+                    # draw polyline and show
+                    for i, box in enumerate(boxes):
+                        points = [box[:8].astype(np.int32).reshape((-1, 1, 2))]
+                        cv2.polylines(im, points, True, color=(0, 255, 0),
+                                      thickness=thickness, lineType=cv2.LINE_AA)
                     cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
                     cv2.resizeWindow(basename, w, h)
                     cv2.imshow(basename, im)
@@ -142,14 +161,16 @@ def main(argv=None):
 
 
 @click.command()
-@click.option('--mode', '-m', default='H')
-@click.option('--image', '-i', default='data/demo/cmt.jpg')
+@click.option('--mode', '-m', default='O')  # H and O
+@click.option('--input', '-i', default='data/demo/cmt.jpg')
 @click.option('--size', '-s', default=600, type=int)
 @click.option('--gpu', '-g', default='0')
 @click.option('--checkpoint_path', '-cp', default='checkpoints_mlt/')
-def run(mode, image, size, gpu, checkpoint_path):
+@click.option('--output', '-o', default='')
+def run(mode, input, size, gpu, checkpoint_path, output):
+    tf.app.flags.DEFINE_string('output_path', output, '')
     tf.app.flags.DEFINE_string('detect_mode', mode, '')
-    tf.app.flags.DEFINE_string('image', image, '')
+    tf.app.flags.DEFINE_string('input', input, '')
     tf.app.flags.DEFINE_integer('image_size', size, '')
     tf.app.flags.DEFINE_string('gpu', gpu, '')
     tf.app.flags.DEFINE_string('checkpoint_path', checkpoint_path, '')
